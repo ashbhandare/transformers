@@ -1,4 +1,5 @@
 import json
+import time
 import logging
 import os
 import random
@@ -8,7 +9,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
-from packaging import version
 import numpy as np
 import torch
 from torch import nn
@@ -23,6 +23,9 @@ from .modeling_utils import PreTrainedModel
 from .optimization import AdamW, get_linear_schedule_with_warmup
 from .training_args import TrainingArguments
 
+from azureml.core.run import Run
+# get the Azure ML run object
+run = Run.get_context()
 
 try:
     from apex import amp
@@ -299,6 +302,7 @@ class Trainer:
 
         tr_loss = 0.0
         logging_loss = 0.0
+        global_batch_train_start = time.time()
         model.zero_grad()
         train_iterator = trange(
             epochs_trained, int(num_train_epochs), desc="Epoch", disable=self.args.local_rank not in [-1, 0],
@@ -328,6 +332,8 @@ class Trainer:
                     scheduler.step()
                     model.zero_grad()
                     global_step += 1
+                    global_batch_train_duration = time.time() - global_batch_train_start
+                    global_batch_train_start = time.time()
 
                     if self.args.local_rank in [-1, 0]:
                         if (self.args.logging_steps > 0 and global_step % self.args.logging_steps == 0) or (
@@ -341,18 +347,17 @@ class Trainer:
                                     logs[eval_key] = value
 
                             loss_scalar = (tr_loss - logging_loss) / self.args.logging_steps
-                            learning_rate_scalar = (
-                                scheduler.get_last_lr()[0]
-                                if version.parse(torch.__version__) >= version.parse("1.4")
-                                else scheduler.get_lr()[0]
-                                )
+                            learning_rate_scalar = scheduler.get_last_lr()[0]
                             logs["learning_rate"] = learning_rate_scalar
                             logs["loss"] = loss_scalar
+                            logs["global_step"] = global_step
+                            logs["global_step_time"] = global_batch_train_duration
                             logging_loss = tr_loss
 
                             if self.tb_writer:
                                 for k, v in logs.items():
                                     self.tb_writer.add_scalar(k, v, global_step)
+                                    run.log(k,v)
                             epoch_iterator.write(json.dumps({**logs, **{"step": global_step}}))
 
                         if self.args.save_steps > 0 and global_step % self.args.save_steps == 0:
@@ -366,9 +371,10 @@ class Trainer:
                             output_dir = os.path.join(self.args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{global_step}")
                             self.save_model(output_dir)
                             self._rotate_checkpoints()
-                            torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                            torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                            logger.info("Saving optimizer and scheduler states to %s", output_dir)
+                            if self.is_world_master():
+                                torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+                                torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                                logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
                 if self.args.max_steps > 0 and global_step > self.args.max_steps:
                     epoch_iterator.close()

@@ -317,7 +317,7 @@ class OrtTrainer:
 
         tr_loss = 0.0
         logging_loss = 0.0
-        global_batch_train_start = 0
+        global_batch_train_start = time.time()
 
         train_iterator = trange(
             epochs_trained, int(num_train_epochs), desc="Epoch", disable=self.args.local_rank not in [-1, 0],

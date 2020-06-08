@@ -46,6 +46,9 @@ from transformers import (
 
 logger = logging.getLogger(__name__)
 
+from azureml.core.run import Run
+# get the Azure ML run object
+run = Run.get_context()
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -278,6 +281,7 @@ def main():
             for key in sorted(result.keys()):
                 logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
+                run.log(key,result[key])
 
         results.update(result)
 
