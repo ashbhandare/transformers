@@ -160,11 +160,6 @@ class OrtTrainer:
         return IODescription('Learning_Rate', [1,], torch.float32)
 
     def to_ort_model(self,model, config, args):
-        # set GPU memory limitation
-        from onnxruntime.capi._pybind_state import set_cuda_mem_limit
-        ort_cuda_mem_limit_in_gbs = 15
-        set_cuda_mem_limit(int(ort_cuda_mem_limit_in_gbs * 1024 * 1024 *1024))
-
         # model_desc = gpt2_model_description(12, 50257, 1024, 6, 1024)
         model_desc = self.gpt2_model_description(config.n_head, config.vocab_size, config.n_embd, config.n_layer, config.n_ctx, args.per_gpu_train_batch_size)
         learning_rate_description = self.ort_trainer_learning_rate_description()
@@ -329,6 +324,11 @@ class OrtTrainer:
                 # Skip past any already trained steps if resuming training
                 if steps_trained_in_current_epoch > 0:
                     steps_trained_in_current_epoch -= 1
+                    continue
+                
+                if len(inputs['input_ids']) < self.args.per_gpu_train_batch_size:
+                    #skip incomplete batch
+                    logger.info('Skipping incomplete batch...')
                     continue
                 
                 learning_rate = torch.tensor([scheduler.get_lr_this_step(global_step, base_lr = self.args.learning_rate)])
